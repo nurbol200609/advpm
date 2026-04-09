@@ -1,1 +1,16 @@
+Alpha Build (Completed):
+ FastAPI server configured
+ Booking endpoints created
+ Time slots auto-generated
+ Swagger docs available at /docs
 
+Backend Setup:
+cd backend
+pip install -r requirements.txt
+python run.py
+
+API Endpoints:
+- GET  /api/timeslots/available - get available slots
+- POST /api/bookings/ - create a booking
+- GET  /api/bookings/ - get all bookings
+- DELETE /api/bookings/{id} - cancel a booking
