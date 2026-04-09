@@ -29,19 +29,33 @@ type AuthUser = {
 }
 
 const API = {
-  timeslots: '/timeslots',
-  bookings: '/bookings',
+  timeslots: '/api/timeslots/available',
+  bookings: '/api/bookings',
   health: '/health',
 }
 
-const USE_MOCK_API = true
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() || 'http://127.0.0.1:8000'
+const FORCE_MOCK_MODE = (import.meta.env.VITE_FORCE_MOCK_MODE as string | undefined) === 'true'
+const USE_MOCK_AUTH = true
 const MOCK_DELAY_MS = 250
 const MOCK_USERS_KEY = 'uqs-mock-users'
 const MOCK_BOOKINGS_KEY = 'uqs-mock-bookings'
 
+const resolveApiUrl = (path: string) => {
+  if (path.startsWith('http://') || path.startsWith('https://')) {
+    return path
+  }
+  return `${API_BASE_URL}${path}`
+}
+
 const fetchJson = async (url: string, options?: RequestInit) => {
-  const response = await fetch(url, {
-    headers: { 'Content-Type': 'application/json' },
+  const resolvedUrl = resolveApiUrl(url)
+  const hasBody = options?.body !== undefined
+  const response = await fetch(resolvedUrl, {
+    headers: {
+      ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
+      ...(options?.headers || {}),
+    },
     ...options,
   })
 
@@ -74,11 +88,27 @@ const findFirstFreeSlot = (slotList: string[], currentBookings: Booking[]) => {
   return slotList.find((slot) => !occupied.has(slot)) || ''
 }
 
+const formatSlotLabelFromIso = (isoDateTime: string) => {
+  const date = new Date(isoDateTime)
+  if (Number.isNaN(date.getTime())) {
+    return isoDateTime
+  }
+
+  return date.toLocaleString('en-US', {
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+}
+
 const validateSduEmail = (email: string) => /^[a-z0-9._%+-]+@sdu\.edu\.kz$/i.test(email.trim())
 const validateStudentId = (id: string) => /^[a-zA-Z0-9-]{5,20}$/.test(id.trim())
 
 const getSlotPeriod = (slot: string): Exclude<SlotFilter, 'all'> => {
-  const hour = Number(slot.split(':')[0])
+  const hourMatch = slot.match(/(\d{1,2}):(\d{2})/)
+  const hour = hourMatch ? Number(hourMatch[1]) : 0
   if (hour < 12) {
     return 'morning'
   }
@@ -250,6 +280,7 @@ function EmptyState({ title, description, action }: { title: string, description
 function App() {
   const [view, setView] = useState<View>('login')
   const [slots, setSlots] = useState<string[]>(() => generateTimeSlots())
+  const [slotIdByLabel, setSlotIdByLabel] = useState<Record<string, string>>({})
   const [bookings, setBookings] = useState<Booking[]>(() => loadMockBookings())
   const [health, setHealth] = useState<string>('Not checked yet')
   const [loading, setLoading] = useState(false)
@@ -261,6 +292,7 @@ function App() {
   const [lastCheckedAt, setLastCheckedAt] = useState<string>('Not checked yet')
   const [healthLatencyMs, setHealthLatencyMs] = useState<number | null>(null)
   const [editingBookingId, setEditingBookingId] = useState<string | null>(null)
+  const [backendConnected, setBackendConnected] = useState(false)
 
   const [registerName, setRegisterName] = useState('')
   const [registerEmail, setRegisterEmail] = useState('')
@@ -273,12 +305,32 @@ function App() {
   const [bookingFieldErrors, setBookingFieldErrors] = useState<{ name?: string, studentId?: string, slot?: string }>({})
 
   const authViews: View[] = ['login', 'register']
+  const useMockApi = FORCE_MOCK_MODE || !backendConnected
 
   useEffect(() => {
-    if (USE_MOCK_API) {
+    if (FORCE_MOCK_MODE) {
+      setBackendConnected(false)
+      return
+    }
+
+    const probeBackend = async () => {
+      try {
+        const data = await fetchJson(API.health)
+        setBackendConnected(true)
+        setHealth(typeof data === 'string' ? data : data.status || 'OK')
+      } catch {
+        setBackendConnected(false)
+      }
+    }
+
+    void probeBackend()
+  }, [])
+
+  useEffect(() => {
+    if (useMockApi) {
       saveMockBookings(bookings)
     }
-  }, [bookings])
+  }, [bookings, useMockApi])
 
   useEffect(() => {
     setMessage(null)
@@ -310,23 +362,37 @@ function App() {
     setMessage(null)
 
     try {
-      if (USE_MOCK_API) {
+      if (useMockApi) {
         await wait(MOCK_DELAY_MS)
         const mockSlots = generateTimeSlots()
         setSlots(mockSlots)
+        setSlotIdByLabel({})
         setSelectedSlot((current) => current || findFirstFreeSlot(mockSlots, bookings))
         return
       }
 
       const data = await fetchJson(API.timeslots)
-      const remoteSlots = Array.isArray(data) ? data : data.slots || []
-      const finalSlots = remoteSlots.length ? remoteSlots : generateTimeSlots()
-      setSlots(finalSlots)
-      setSelectedSlot((current) => current || findFirstFreeSlot(finalSlots, bookings))
+      const remoteSlotsRaw = Array.isArray(data) ? data : []
+
+      const normalizedSlots = remoteSlotsRaw.map((slot: { slot_id: string, start_time: string }) => ({
+        id: slot.slot_id,
+        label: formatSlotLabelFromIso(slot.start_time),
+      }))
+
+      const unique = Array.from(new Map(normalizedSlots.map((slot) => [slot.label, slot])).values())
+      const finalLabels = unique.length ? unique.map((slot) => slot.label) : generateTimeSlots()
+      const slotIdMap = Object.fromEntries(unique.map((slot) => [slot.label, slot.id]))
+
+      setSlots(finalLabels)
+      setSlotIdByLabel(slotIdMap)
+      setBackendConnected(true)
+      setSelectedSlot((current) => current || findFirstFreeSlot(finalLabels, bookings))
     } catch {
+      setBackendConnected(false)
       setMessage('Could not fetch time slots. Falling back to default schedule.')
       const fallbackSlots = generateTimeSlots()
       setSlots(fallbackSlots)
+      setSlotIdByLabel({})
       setSelectedSlot((current) => current || findFirstFreeSlot(fallbackSlots, bookings))
     } finally {
       setLoading(false)
@@ -338,15 +404,33 @@ function App() {
     setMessage(null)
 
     try {
-      if (USE_MOCK_API) {
+      if (useMockApi) {
         await wait(MOCK_DELAY_MS)
         return
       }
 
       const data = await fetchJson(API.bookings)
-      const incoming = (Array.isArray(data) ? data : data.bookings || []) as Booking[]
-      setBookings(incoming.map((booking, index) => normalizeBooking(booking, index)))
+      const incoming = (Array.isArray(data) ? data : []) as Array<{
+        id: string
+        student_name: string
+        student_email: string
+        timeslot_start: string
+        created_at: string
+      }>
+
+      const normalized = incoming.map((booking, index) => normalizeBooking({
+        id: booking.id,
+        name: booking.student_name,
+        studentId: booking.student_email.split('@')[0] || 'unknown',
+        slot: formatSlotLabelFromIso(booking.timeslot_start),
+        createdAt: new Date(booking.created_at).toLocaleString('en-US'),
+        status: 'Confirmed',
+      }, index))
+
+      setBookings(normalized)
+      setBackendConnected(true)
     } catch {
+      setBackendConnected(false)
       setMessage('Could not fetch bookings. Please check the backend.')
       setBookings([])
     } finally {
@@ -360,9 +444,10 @@ function App() {
     setMessage(null)
 
     try {
-      if (USE_MOCK_API) {
+      if (FORCE_MOCK_MODE) {
         await wait(MOCK_DELAY_MS)
         setHealth('Mock mode active. Backend is not connected yet.')
+        setBackendConnected(false)
         setHealthLatencyMs(Math.round(performance.now() - startedAt))
         setLastCheckedAt(new Date().toLocaleTimeString('en-US'))
         return
@@ -370,11 +455,13 @@ function App() {
 
       const data = await fetchJson(API.health)
       setHealth(typeof data === 'string' ? data : data.status || 'OK')
+      setBackendConnected(true)
       setHealthLatencyMs(Math.round(performance.now() - startedAt))
       setLastCheckedAt(new Date().toLocaleTimeString('en-US'))
     } catch {
+      setBackendConnected(false)
       setMessage('Could not check server health.')
-      setHealth('Server is unavailable')
+      setHealth('Server is unavailable. Mock fallback enabled.')
       setHealthLatencyMs(Math.round(performance.now() - startedAt))
       setLastCheckedAt(new Date().toLocaleTimeString('en-US'))
     } finally {
@@ -406,7 +493,7 @@ function App() {
     setMessage(null)
 
     try {
-      if (USE_MOCK_API) {
+      if (USE_MOCK_AUTH) {
         await wait(MOCK_DELAY_MS)
         const exists = mockUsers.some((user) => user.email === normalizedEmail)
         if (exists) {
@@ -469,7 +556,7 @@ function App() {
     setMessage(null)
 
     try {
-      if (USE_MOCK_API) {
+      if (USE_MOCK_AUTH) {
         await wait(MOCK_DELAY_MS)
         const existingUser = mockUsers.find(
           (user) => user.email === normalizedEmail && user.password === normalizedPassword,
@@ -551,7 +638,7 @@ function App() {
     setMessage(null)
 
     try {
-      if (USE_MOCK_API) {
+      if (useMockApi) {
         await wait(MOCK_DELAY_MS)
         if (editingBookingId) {
           setBookings((current) => current.map((booking) => (
@@ -583,41 +670,85 @@ function App() {
         return
       }
 
+      const slotId = slotIdByLabel[selectedSlot]
+      if (!slotId) {
+        setMessage('Selected slot is not recognized by backend. Please refresh slots.')
+        setBackendConnected(false)
+        return
+      }
+
       if (editingBookingId) {
-        setBookings((current) => current.map((booking) => (
-          booking.id === editingBookingId
-            ? {
-                ...booking,
-                name: name.trim(),
-                studentId: studentId.trim(),
-                slot: selectedSlot,
-                status: 'Confirmed',
-              }
-            : booking
-        )))
+        const rescheduled = await fetchJson(API.bookings, {
+          method: 'POST',
+          body: JSON.stringify({
+            student_name: name.trim(),
+            student_email: `${studentId.trim().toLowerCase()}@sdu.edu.kz`,
+            service_type: 'deanery',
+            slot_id: slotId,
+          }),
+        }) as {
+          id: string
+          student_name: string
+          student_email: string
+          timeslot_start: string
+          created_at: string
+        }
+
+        await fetchJson(`${API.bookings}/${editingBookingId}`, { method: 'DELETE' })
+
+        const normalized = normalizeBooking({
+          id: rescheduled.id,
+          name: rescheduled.student_name,
+          studentId: rescheduled.student_email.split('@')[0] || studentId.trim(),
+          slot: formatSlotLabelFromIso(rescheduled.timeslot_start),
+          createdAt: new Date(rescheduled.created_at).toLocaleString('en-US'),
+          status: 'Confirmed',
+        }, bookings.length)
+
+        setBookings((current) => {
+          const withoutOld = current.filter((booking) => booking.id !== editingBookingId)
+          return [...withoutOld, normalized]
+        })
+        setBackendConnected(true)
         setEditingBookingId(null)
         setStudentId('')
-        setMessage('Booking rescheduled successfully.')
+        setMessage(`Booking rescheduled successfully. New queue: ${normalized.queueNumber}`)
         setView('bookings')
         return
       }
 
-      const created = await fetchJson(API.bookings, {
+      const created = await fetchJson(`${API.bookings}/`, {
         method: 'POST',
         body: JSON.stringify({
-          name: name.trim(),
-          studentId: studentId.trim(),
-          slot: selectedSlot,
+          student_name: name.trim(),
+          student_email: `${studentId.trim().toLowerCase()}@sdu.edu.kz`,
+          service_type: 'deanery',
+          slot_id: slotId,
         }),
-      })
+      }) as {
+        id: string
+        student_name: string
+        student_email: string
+        timeslot_start: string
+        created_at: string
+      }
 
-      const normalized = normalizeBooking(created as Booking, bookings.length)
+      const normalized = normalizeBooking({
+        id: created.id,
+        name: created.student_name,
+        studentId: created.student_email.split('@')[0] || studentId.trim(),
+        slot: formatSlotLabelFromIso(created.timeslot_start),
+        createdAt: new Date(created.created_at).toLocaleString('en-US'),
+        status: 'Confirmed',
+      }, bookings.length)
       setBookings((current) => [...current, normalized])
+      setBackendConnected(true)
       setEditingBookingId(null)
       setStudentId('')
       setMessage(`Booking created successfully. Queue number: ${normalized.queueNumber}`)
       setView('bookings')
     } catch {
+      setBackendConnected(false)
       setMessage('Could not create booking.')
     } finally {
       setLoading(false)
@@ -629,7 +760,7 @@ function App() {
     setMessage(null)
 
     try {
-      if (USE_MOCK_API) {
+      if (useMockApi) {
         await wait(MOCK_DELAY_MS)
         setBookings((current) => current.filter((booking) => booking.id !== id))
         if (editingBookingId === id) {
@@ -642,12 +773,14 @@ function App() {
 
       await fetchJson(`${API.bookings}/${id}`, { method: 'DELETE' })
       setBookings((current) => current.filter((booking) => booking.id !== id))
+      setBackendConnected(true)
       if (editingBookingId === id) {
         setEditingBookingId(null)
         setSelectedSlot('')
       }
       setMessage('Booking canceled.')
     } catch {
+      setBackendConnected(false)
       setMessage('Could not cancel booking.')
     } finally {
       setLoading(false)
@@ -725,7 +858,7 @@ function App() {
           </div>
 
           <div className="hero-badges">
-            <StatusPill label={USE_MOCK_API ? 'Mock Mode Active' : 'Live API Mode'} tone={USE_MOCK_API ? 'info' : 'success'} />
+            <StatusPill label={useMockApi ? 'Mock Mode Active' : 'Live API Mode'} tone={useMockApi ? 'info' : 'success'} />
             <StatusPill label={health} tone={healthTone} />
           </div>
         </div>
@@ -898,7 +1031,7 @@ function App() {
             <StatCard
               title="System health"
               value={healthTone === 'warning' ? 'Attention' : 'Operational'}
-              helper={USE_MOCK_API ? 'Simulated monitoring enabled' : 'Connected to API'}
+              helper={useMockApi ? 'Simulated monitoring enabled' : 'Connected to API'}
               icon="health"
             />
           </div>
@@ -1207,9 +1340,9 @@ function App() {
             <article className="health-row">
               <div>
                 <h3>Backend API</h3>
-                <p>{USE_MOCK_API ? 'Simulated in mock mode' : 'Connected to live API'}</p>
+                <p>{useMockApi ? 'Simulated in mock mode' : 'Connected to live API'}</p>
               </div>
-              <StatusPill label={USE_MOCK_API ? 'Simulated' : 'Online'} tone={USE_MOCK_API ? 'info' : 'success'} />
+              <StatusPill label={useMockApi ? 'Simulated' : 'Online'} tone={useMockApi ? 'info' : 'success'} />
             </article>
 
             <article className="health-row">
@@ -1217,7 +1350,7 @@ function App() {
                 <h3>Authentication</h3>
                 <p>Access control for SDU user accounts</p>
               </div>
-              <StatusPill label={USE_MOCK_API ? 'Mock Auth' : 'Active'} tone={USE_MOCK_API ? 'info' : 'success'} />
+              <StatusPill label={useMockApi ? 'Mock Auth' : 'Active'} tone={useMockApi ? 'info' : 'success'} />
             </article>
 
             <article className="health-row">
