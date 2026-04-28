@@ -1,14 +1,15 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import bookings, timeslots
+from app.database import engine, Base
+from app.routers import bookings, timeslots, auth, preorders
+
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
-    title="University Queue System API",
-    description="API для управления предзаказами и очередями в университете",
-    version="1.0.0-alpha"
+    title="CampusFlow API",
+    version="1.0.0"
 )
 
-# Настройка CORS для фронтенда
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,22 +18,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Подключаем роутеры
-app.include_router(bookings.router)
+app.include_router(auth.router)
 app.include_router(timeslots.router)
+app.include_router(bookings.router)
+app.include_router(preorders.router)
 
 @app.get("/")
-async def root():
-    return {
-        "message": "University Queue System API",
-        "version": "1.0.0-alpha",
-        "endpoints": {
-            "timeslots": "/api/timeslots/available",
-            "bookings": "/api/bookings/",
-            "docs": "/docs"
-        }
-    }
+def root():
+    return {"msg": "CampusFlow API is running"}
 
 @app.get("/health")
-async def health_check():
-    return {"status": "healthy"}
+def health():
+    return {"status": "ok"}
