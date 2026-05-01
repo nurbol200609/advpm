@@ -13,10 +13,9 @@ body {
   margin: 0;
   min-width: 320px;
   background:
-    radial-gradient(circle at 12% 10%, #ffe7bf 0%, transparent 30%),
-    radial-gradient(circle at 88% 90%, #bde9df 0%, transparent 34%),
-    linear-gradient(120deg, #fff8ee 0%, #ffe8ca 100%);
-  font-family: 'Manrope', 'Segoe UI', Tahoma, sans-serif;
+    linear-gradient(rgba(238, 242, 246, 0.92), rgba(238, 242, 246, 0.97)),
+    url('https://sdu.edu.kz/wp-content/uploads/2023/04/o-nas.webp') center top / cover fixed;
+  font-family: 'Inter', 'Segoe UI', Tahoma, sans-serif;
   color: #2c1d11;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
