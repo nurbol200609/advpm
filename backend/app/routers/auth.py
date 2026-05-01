@@ -1,14 +1,21 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User
 from app.schemas import RegisterRequest, LoginRequest, TokenResponse
-from app.utils import hash_password, verify_password, create_token
+from app.utils import hash_password, verify_password, create_token, decode_token
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 @router.post("/register", response_model=TokenResponse)
-def register(data: RegisterRequest, db: Session = Depends(get_db)):
+def register(data: RegisterRequest, db: Session = Depends(get_db), authorization: str = Header(None)):
+    if data.role != "student":
+        if not authorization or not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="admin token required")
+        payload = decode_token(authorization.split(" ")[1])
+        if not payload or payload.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="admin only")
+
     existing = db.query(User).filter(User.email == data.email).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email уже занят")

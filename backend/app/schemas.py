@@ -31,6 +31,13 @@ class TimeslotResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class TimeslotRequest(BaseModel):
+    service_type: str = Field(..., pattern="^(cafe|library|deanery)$")
+    start_time: datetime
+    end_time: datetime
+    capacity: int = Field(..., ge=1)
+    is_active: bool = True
+
 #  BOOKINGS
 class BookingRequest(BaseModel):
     timeslot_id: str

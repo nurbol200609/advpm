@@ -69,7 +69,7 @@ def cancel_booking(booking_id: str, db: Session = Depends(get_db), user=Depends(
     booking = db.query(Booking).filter(Booking.id == booking_id).first()
     if not booking:
         raise HTTPException(status_code=404, detail="not found")
-    if booking.user_id != user["sub"]:
+    if booking.user_id != user["sub"] and user["role"] != "admin":
         raise HTTPException(status_code=403, detail="not your booking")
     if booking.status == "cancelled":
         raise HTTPException(status_code=400, detail="already cancelled")

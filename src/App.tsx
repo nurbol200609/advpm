@@ -579,7 +579,11 @@ function App() {
     try {
       await request<{ msg: string }>(`/api/bookings/${bookingId}`, { method: 'DELETE' }, token)
       setNotice('Booking cancelled.')
-      await Promise.all([loadSlots(service), loadMyBookings()])
+      if (user?.role === 'admin') {
+        await Promise.all([loadSlots(service), loadAllBookings()])
+      } else {
+        await Promise.all([loadSlots(service), loadMyBookings()])
+      }
     } catch (error) {
       setNotice(normalizeError(error))
     } finally {
