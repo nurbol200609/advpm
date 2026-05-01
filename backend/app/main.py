@@ -1,19 +1,15 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import HTTPBearer
 from app.database import engine, Base
 from app.routers import bookings, timeslots, auth, preorders
 
 # Создаём таблицы в БД
 Base.metadata.create_all(bind=engine)
 
-# Определяем FastAPI приложение ОДИН РАЗ
+# Определяем FastAPI приложение
 app = FastAPI(
     title="CampusFlow API",
-    version="1.0.0",
-    swagger_ui_init_oauth={
-        "usePkceWithAuthorizationCodeGrant": True,
-    }
+    version="1.0.0"
 )
 
 # CORS middleware
@@ -25,15 +21,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Схема безопасности для Swagger
-security = HTTPBearer()
+# Подключаем роутеры (ВАЖНО: до настройки OpenAPI)
+app.include_router(auth.router)
+app.include_router(timeslots.router)
+app.include_router(bookings.router)
+app.include_router(preorders.router)
 
-# Функция для добавления security схемы в OpenAPI
-def add_security_schema():
+
+@app.get("/")
+def root():
+    return {"msg": "CampusFlow API is running"}
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+# Настройка Swagger UI с авторизацией (после всех роутеров)
+def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
 
     openapi_schema = app.openapi()
+
+    # Добавляем схему безопасности
     openapi_schema["components"]["securitySchemes"] = {
         "BearerAuth": {
             "type": "http",
@@ -42,7 +54,7 @@ def add_security_schema():
         }
     }
 
-    # Добавляем security ко всем защищённым эндпоинтам
+    # Добавляем security ко всем эндпоинтам, кроме auth
     for path in openapi_schema["paths"]:
         for method in openapi_schema["paths"][path]:
             if not path.startswith("/api/auth"):
@@ -51,18 +63,5 @@ def add_security_schema():
     app.openapi_schema = openapi_schema
     return app.openapi_schema
 
-app.openapi = add_security_schema
 
-# Подключаем роутеры
-app.include_router(auth.router)
-app.include_router(timeslots.router)
-app.include_router(bookings.router)
-app.include_router(preorders.router)
-
-@app.get("/")
-def root():
-    return {"msg": "CampusFlow API is running"}
-
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+app.openapi = custom_openapi
