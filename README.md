@@ -20,7 +20,7 @@ https://campusflow-backend-ra0h.onrender.com
 | --- | --- | --- |
 | Bexulton Shovkatboyev | 230103294@sdu.edu.kz | Backend |
 | Zhakyp Nurbol | 230103152@sdu.edu.kz | Frontend |
-| Project Manager | 230103156@sdu.edu.kz | Project management |
+| Kaldybay Bakdaulet | 230103156@sdu.edu.kz | Project management |
 
 ## Features
 
@@ -61,7 +61,6 @@ Backend:
 | Login | Yes | Yes | Yes |
 | View service slots | Yes | No | Yes |
 | Create booking | Yes | No | No |
-| Cancel booking | Own only | No | Any active booking |
 | View own bookings | Yes | No | No |
 | View service queue | No | Yes | Yes |
 | Mark booking as served | No | Yes | Yes |
