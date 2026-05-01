@@ -2,7 +2,7 @@ from pydantic import BaseModel, EmailStr, Field
 from datetime import datetime
 from typing import Optional, List
 
-# --- AUTH ---
+# AUTH
 class RegisterRequest(BaseModel):
     name: str = Field(..., min_length=2, max_length=100)
     email: EmailStr
@@ -19,7 +19,7 @@ class TokenResponse(BaseModel):
     user_name: str
     user_role: str
 
-# --- TIMESLOTS ---
+#  TIMESLOTS
 class TimeslotResponse(BaseModel):
     id: str
     service_type: str
@@ -31,7 +31,7 @@ class TimeslotResponse(BaseModel):
     class Config:
         from_attributes = True
 
-# --- BOOKINGS ---
+#  BOOKINGS
 class BookingRequest(BaseModel):
     timeslot_id: str
     service_type: str = Field(..., pattern="^(cafe|library|deanery)$")
@@ -46,7 +46,7 @@ class BookingResponse(BaseModel):
     class Config:
         from_attributes = True
 
-# --- PREORDERS ---
+#  PREORDERS
 class PreOrderItem(BaseModel):
     name: str
     price: int
