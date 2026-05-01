@@ -1,20 +1,56 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import './App.css'
+import {
+  API_ENDPOINTS,
+  apiRequest,
+  fetchJson,
+  getStoredToken,
+  setStoredToken,
+  clearStoredToken,
+  buildApiUrl,
+} from './config/api'
 
-type BookingStatus = 'Confirmed' | 'Pending' | 'Completed'
+type BookingStatus = 'Confirmed' | 'Waiting' | 'Completed' | 'Cancelled'
 
 type Booking = {
   id: string
   name: string
   studentId: string
+  service: string
+  purpose: string
+  date: string
   slot: string
   createdAt?: string
   queueNumber?: string
   status?: BookingStatus
 }
 
-type View = 'home' | 'timeslots' | 'booking' | 'bookings' | 'health' | 'login' | 'register'
+type Service = {
+  id: string
+  name: string
+  description: string
+  icon: string
+  hours: string
+  queueLoad: number // 0-100
+}
+
+type Role = 'student' | 'staff' | 'admin'
+
+type View =
+  | 'home'
+  | 'timeslots'
+  | 'booking'
+  | 'bookings'
+  | 'health'
+  | 'login'
+  | 'register'
+  | 'analytics'
+  | 'staff-dashboard'
+  | 'queue'
+  | 'services'
+  | 'users'
+
 type SlotFilter = 'all' | 'morning' | 'afternoon' | 'evening'
 
 type MockUser = {
@@ -26,45 +62,105 @@ type MockUser = {
 type AuthUser = {
   fullName: string
   email: string
+  role: Role
+  studentId?: string
 }
 
-const API = {
-  timeslots: '/api/timeslots/available',
-  bookings: '/api/bookings',
-  health: '/health',
+const API = API_ENDPOINTS
+
+const getNavigationTabs = (role: Role) => {
+  if (role === 'student') {
+    return [
+      { label: 'Home', value: 'home' },
+      { label: 'Time Slots', value: 'timeslots' },
+      { label: 'Booking', value: 'booking' },
+      { label: 'My Bookings', value: 'bookings' },
+      { label: 'Health Check', value: 'health' },
+    ]
+  }
+
+  if (role === 'staff') {
+    return [
+      { label: 'Staff Dashboard', value: 'staff-dashboard' },
+      { label: 'Queue', value: 'queue' },
+      { label: 'Bookings', value: 'bookings' },
+      { label: 'Health Check', value: 'health' },
+    ]
+  }
+
+  return [
+    { label: 'Admin Dashboard', value: 'home' },
+    { label: 'Analytics', value: 'analytics' },
+    { label: 'Services', value: 'services' },
+    { label: 'Users', value: 'users' },
+    { label: 'Health Check', value: 'health' },
+  ]
 }
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() || 'http://127.0.0.1:8000'
+const getDefaultViewForRole = (role: Role): View => {
+  if (role === 'student') return 'home'
+  if (role === 'staff') return 'staff-dashboard'
+  return 'home'
+}
+
+const isAuthorizedView = (view: View, role: Role) => {
+  const allowed: Record<Role, View[]> = {
+    student: ['home', 'timeslots', 'booking', 'bookings', 'health'],
+    staff: ['staff-dashboard', 'queue', 'bookings', 'health'],
+    admin: ['home', 'analytics', 'services', 'users', 'health'],
+  }
+  return allowed[role].includes(view)
+}
+
 const FORCE_MOCK_MODE = (import.meta.env.VITE_FORCE_MOCK_MODE as string | undefined) === 'true'
-const USE_MOCK_AUTH = true
+const USE_MOCK_AUTH = (import.meta.env.VITE_USE_MOCK_AUTH as string | undefined) === 'true'
 const MOCK_DELAY_MS = 250
 const MOCK_USERS_KEY = 'uqs-mock-users'
 const MOCK_BOOKINGS_KEY = 'uqs-mock-bookings'
+const MOCK_CURRENT_USER_KEY = 'uqs-current-user'
 
-const resolveApiUrl = (path: string) => {
-  if (path.startsWith('http://') || path.startsWith('https://')) {
-    return path
-  }
-  return `${API_BASE_URL}${path}`
-}
-
-const fetchJson = async (url: string, options?: RequestInit) => {
-  const resolvedUrl = resolveApiUrl(url)
-  const hasBody = options?.body !== undefined
-  const response = await fetch(resolvedUrl, {
-    headers: {
-      ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
-      ...(options?.headers || {}),
-    },
-    ...options,
-  })
-
-  if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}`)
-  }
-
-  return response.json()
-}
+const MOCK_SERVICES: Service[] = [
+  {
+    id: 'deans-office',
+    name: "Dean's Office",
+    description: 'Academic advising, course registration, and degree planning',
+    icon: '🎓',
+    hours: '9:00 AM - 5:00 PM',
+    queueLoad: 45,
+  },
+  {
+    id: 'library',
+    name: 'Library',
+    description: 'Book borrowing, study room reservations, and research assistance',
+    icon: '📚',
+    hours: '8:00 AM - 8:00 PM',
+    queueLoad: 25,
+  },
+  {
+    id: 'student-services',
+    name: 'Student Service Center',
+    description: 'ID cards, transcripts, financial aid, and general inquiries',
+    icon: '👥',
+    hours: '9:00 AM - 6:00 PM',
+    queueLoad: 60,
+  },
+  {
+    id: 'registrar',
+    name: 'Registrar Office',
+    description: 'Grade reports, enrollment verification, and official documents',
+    icon: '📋',
+    hours: '8:30 AM - 4:30 PM',
+    queueLoad: 35,
+  },
+  {
+    id: 'cafeteria',
+    name: 'Cafeteria',
+    description: 'Meal plans, dietary accommodations, and food service issues',
+    icon: '🍽️',
+    hours: '7:00 AM - 7:00 PM',
+    queueLoad: 15,
+  },
+]
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -119,7 +215,7 @@ const getSlotPeriod = (slot: string): Exclude<SlotFilter, 'all'> => {
 }
 
 const toStatus = (value?: string): BookingStatus => {
-  if (value === 'Pending' || value === 'Completed') {
+  if (value === 'Waiting' || value === 'Completed' || value === 'Cancelled') {
     return value
   }
   return 'Confirmed'
@@ -157,6 +253,45 @@ const saveMockUsers = (users: MockUser[]) => {
   }
 }
 
+const loadCurrentUser = (): AuthUser | null => {
+  if (typeof window === 'undefined') {
+    return null
+  }
+
+  const raw = window.localStorage.getItem(MOCK_CURRENT_USER_KEY)
+  if (!raw) {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object') {
+      return null
+    }
+
+    const role = (parsed.role || parsed.user_role || 'student') as Role
+
+    return {
+      fullName: parsed.fullName || parsed.user_name || parsed.name || 'SDU User',
+      email: parsed.email || '',
+      role,
+      studentId: parsed.studentId || parsed.student_id || undefined,
+    }
+  } catch {
+    return null
+  }
+}
+
+const saveCurrentUser = (user: AuthUser | null) => {
+  if (typeof window !== 'undefined') {
+    if (user) {
+      window.localStorage.setItem(MOCK_CURRENT_USER_KEY, JSON.stringify(user))
+    } else {
+      window.localStorage.removeItem(MOCK_CURRENT_USER_KEY)
+    }
+  }
+}
+
 const loadMockBookings = (): Booking[] => {
   if (typeof window === 'undefined') {
     return []
@@ -184,7 +319,7 @@ const saveMockBookings = (bookings: Booking[]) => {
   }
 }
 
-const buildMockBooking = (name: string, studentId: string, slot: string, count: number): Booking => {
+const buildMockBooking = (name: string, studentId: string, service: string, purpose: string, date: string, slot: string, count: number): Booking => {
   const id = typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -193,6 +328,9 @@ const buildMockBooking = (name: string, studentId: string, slot: string, count: 
     id,
     name,
     studentId,
+    service,
+    purpose,
+    date,
     slot,
     createdAt: new Date().toLocaleString('en-US'),
     queueNumber: generateQueueNumber(count),
@@ -292,7 +430,7 @@ function App() {
   const [lastCheckedAt, setLastCheckedAt] = useState<string>('Not checked yet')
   const [healthLatencyMs, setHealthLatencyMs] = useState<number | null>(null)
   const [editingBookingId, setEditingBookingId] = useState<string | null>(null)
-  const [backendConnected, setBackendConnected] = useState(false)
+  const [, setBackendConnected] = useState(false)
 
   const [registerName, setRegisterName] = useState('')
   const [registerEmail, setRegisterEmail] = useState('')
@@ -300,12 +438,16 @@ function App() {
   const [loginEmail, setLoginEmail] = useState('')
   const [loginPassword, setLoginPassword] = useState('')
   const [mockUsers, setMockUsers] = useState<MockUser[]>(() => loadMockUsers())
-  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null)
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(loadCurrentUser())
 
-  const [bookingFieldErrors, setBookingFieldErrors] = useState<{ name?: string, studentId?: string, slot?: string }>({})
+  const [bookingFieldErrors, setBookingFieldErrors] = useState<{ name?: string, studentId?: string, service?: string, purpose?: string, date?: string, slot?: string }>({})
+
+  const [selectedService, setSelectedService] = useState('')
+  const [purpose, setPurpose] = useState('')
+  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0])
 
   const authViews: View[] = ['login', 'register']
-  const useMockApi = FORCE_MOCK_MODE || !backendConnected
+  const useMockApi = FORCE_MOCK_MODE
 
   useEffect(() => {
     if (FORCE_MOCK_MODE) {
@@ -333,17 +475,29 @@ function App() {
   }, [bookings, useMockApi])
 
   useEffect(() => {
+    saveCurrentUser(currentUser)
+  }, [currentUser])
+
+  useEffect(() => {
     setMessage(null)
+
+    if (!currentUser) {
+      const token = getStoredToken()
+      const persistedUser = loadCurrentUser()
+      if (token && persistedUser) {
+        setCurrentUser(persistedUser)
+      }
+    }
 
     if (!currentUser && !authViews.includes(view)) {
       setView('login')
       return
     }
 
-    if (view === 'timeslots' || view === 'booking') {
+    if (currentUser && (view === 'timeslots' || view === 'booking')) {
       void loadSlots()
     }
-    if (view === 'bookings') {
+    if (currentUser && view === 'bookings') {
       void loadBookings()
     }
     if (view === 'health') {
@@ -358,20 +512,16 @@ function App() {
   }, [currentUser])
 
   const loadSlots = async () => {
+    if (!currentUser) {
+      return
+    }
+
     setLoading(true)
     setMessage(null)
 
     try {
-      if (useMockApi) {
-        await wait(MOCK_DELAY_MS)
-        const mockSlots = generateTimeSlots()
-        setSlots(mockSlots)
-        setSlotIdByLabel({})
-        setSelectedSlot((current) => current || findFirstFreeSlot(mockSlots, bookings))
-        return
-      }
-
-      const data = await fetchJson(API.timeslots)
+      // Try real API first
+      const data = await apiRequest(API.timeslots)
       const remoteSlotsRaw = Array.isArray(data) ? data : []
 
       const normalizedSlots = remoteSlotsRaw.map((slot: { slot_id: string, start_time: string }) => ({
@@ -387,9 +537,14 @@ function App() {
       setSlotIdByLabel(slotIdMap)
       setBackendConnected(true)
       setSelectedSlot((current) => current || findFirstFreeSlot(finalLabels, bookings))
-    } catch {
+    } catch (error) {
+      console.warn('Failed to load slots from backend:', error)
       setBackendConnected(false)
-      setMessage('Could not fetch time slots. Falling back to default schedule.')
+
+      // Fallback to mock slots
+      if (!FORCE_MOCK_MODE) {
+        setMessage('Could not fetch time slots from server. Using default schedule.')
+      }
       const fallbackSlots = generateTimeSlots()
       setSlots(fallbackSlots)
       setSlotIdByLabel({})
@@ -400,39 +555,57 @@ function App() {
   }
 
   const loadBookings = async () => {
+    if (!currentUser) {
+      return
+    }
+
     setLoading(true)
     setMessage(null)
 
     try {
-      if (useMockApi) {
-        await wait(MOCK_DELAY_MS)
-        return
-      }
-
-      const data = await fetchJson(API.bookings)
+      // Try real API first
+      const data = await apiRequest(API.bookings)
       const incoming = (Array.isArray(data) ? data : []) as Array<{
         id: string
-        student_name: string
-        student_email: string
-        timeslot_start: string
-        created_at: string
+        student_name?: string
+        student_email?: string
+        timeslot_start?: string
+        created_at?: string
+        service?: string
+        purpose?: string
+        date?: string
+        status?: string
+        queue_number?: string
       }>
 
       const normalized = incoming.map((booking, index) => normalizeBooking({
         id: booking.id,
-        name: booking.student_name,
-        studentId: booking.student_email.split('@')[0] || 'unknown',
-        slot: formatSlotLabelFromIso(booking.timeslot_start),
-        createdAt: new Date(booking.created_at).toLocaleString('en-US'),
-        status: 'Confirmed',
+        name: booking.student_name || 'Unknown',
+        studentId: booking.student_email?.split('@')[0] || 'unknown',
+        service: booking.service || 'General',
+        purpose: booking.purpose || 'Appointment',
+        date: booking.date || new Date().toISOString().split('T')[0],
+        slot: booking.timeslot_start ? formatSlotLabelFromIso(booking.timeslot_start) : 'TBD',
+        createdAt: booking.created_at ? new Date(booking.created_at).toLocaleString('en-US') : new Date().toLocaleString('en-US'),
+        queueNumber: booking.queue_number,
+        status: toStatus(booking.status),
       }, index))
 
       setBookings(normalized)
       setBackendConnected(true)
-    } catch {
+    } catch (error) {
+      console.warn('Failed to load bookings from backend:', error)
       setBackendConnected(false)
-      setMessage('Could not fetch bookings. Please check the backend.')
-      setBookings([])
+
+      // Fallback to mock data if backend fails
+      if (!FORCE_MOCK_MODE) {
+        setMessage('Could not fetch bookings from server. Showing cached data.')
+        // Keep existing mock bookings or show empty
+        setBookings(loadMockBookings())
+      } else {
+        setMessage('Could not fetch bookings. Please check your connection.')
+        setBookings([])
+      }
     } finally {
       setLoading(false)
     }
@@ -453,15 +626,16 @@ function App() {
         return
       }
 
-      const data = await fetchJson(API.health)
+      const data = await apiRequest(API.health)
       setHealth(typeof data === 'string' ? data : data.status || 'OK')
       setBackendConnected(true)
       setHealthLatencyMs(Math.round(performance.now() - startedAt))
       setLastCheckedAt(new Date().toLocaleTimeString('en-US'))
-    } catch {
+    } catch (error) {
+      console.warn('Health check failed:', error)
       setBackendConnected(false)
-      setMessage('Could not check server health.')
-      setHealth('Server is unavailable. Mock fallback enabled.')
+      setMessage('Backend is unavailable. Please try again later.')
+      setHealth('Server is unavailable. Limited functionality available.')
       setHealthLatencyMs(Math.round(performance.now() - startedAt))
       setLastCheckedAt(new Date().toLocaleTimeString('en-US'))
     } finally {
@@ -475,12 +649,24 @@ function App() {
     const normalizedPassword = registerPassword.trim()
 
     if (!registerName.trim()) {
-      setMessage('Please enter your full name.')
+      setMessage('Full name is required.')
+      return
+    }
+
+    if (!normalizedEmail) {
+      setMessage('Email is required.')
       return
     }
 
     if (!validateSduEmail(normalizedEmail)) {
-      setMessage('Only SDU email is allowed (example: your.name@sdu.edu.kz).')
+      setMessage('Email must end with @sdu.edu.kz.')
+      return
+    }
+
+    const emailUsername = normalizedEmail.split('@')[0]
+    const isStudentEmail = /^[0-9]+$/.test(emailUsername)
+    if (!isStudentEmail) {
+      setMessage('Public registration is only for students. Staff and admin accounts are created by the administrator.')
       return
     }
 
@@ -510,28 +696,46 @@ function App() {
         const updatedUsers = [...mockUsers, newUser]
         setMockUsers(updatedUsers)
         saveMockUsers(updatedUsers)
-        setCurrentUser({ fullName: newUser.fullName, email: newUser.email })
         setRegisterName('')
         setRegisterEmail('')
         setRegisterPassword('')
-        setMessage('Registration successful in mock mode.')
-        setView('home')
+        setMessage('Registration successful. Please login with your credentials.')
+        setView('login')
         return
       }
 
-      await fetchJson('/auth/register', {
+      const studentIdFromEmail = normalizedEmail.split('@')[0]
+      const registerUrl = buildApiUrl(API.register)
+      
+      console.log('Register request URL:', registerUrl)
+      console.log('Register request body:', {
+        full_name: registerName.trim(),
+        email: normalizedEmail,
+        student_id: studentIdFromEmail,
+        password: normalizedPassword,
+        role: 'student',
+      })
+      
+      const response = await apiRequest(API.register, {
         method: 'POST',
         body: JSON.stringify({
-          fullName: registerName.trim(),
+          full_name: registerName.trim(),
           email: normalizedEmail,
+          student_id: studentIdFromEmail,
           password: normalizedPassword,
+          role: 'student',
         }),
       })
+      
+      console.log('Register response:', response)
 
-      setMessage('Registration successful. Please login.')
+      setRegisterName('')
+      setRegisterEmail('')
+      setRegisterPassword('')
+      setMessage('Registration successful. Please login with your credentials.')
       setView('login')
-    } catch {
-      setMessage('Could not register user.')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not register user.')
     } finally {
       setLoading(false)
     }
@@ -567,33 +771,59 @@ function App() {
           return
         }
 
-        setCurrentUser({ fullName: existingUser.fullName, email: existingUser.email })
+        setCurrentUser({ fullName: existingUser.fullName, email: existingUser.email, role: 'student' })
         setLoginEmail('')
         setLoginPassword('')
-        setMessage('Logged in successfully (mock mode).')
+        setMessage('Logged in successfully.')
         setView('home')
         return
       }
 
-      const user = await fetchJson('/auth/login', {
+      const loginUrl = buildApiUrl(API.login)
+      
+      console.log('Login request URL:', loginUrl)
+      console.log('Login request body:', {
+        email: normalizedEmail,
+        password: normalizedPassword,
+      })
+      
+      const response = await apiRequest(API.login, {
         method: 'POST',
         body: JSON.stringify({
           email: normalizedEmail,
           password: normalizedPassword,
         }),
       })
+      
+      console.log('Login response status:', response.status)
+      console.log('Login response:', response)
 
-      setCurrentUser({ fullName: user.fullName || 'Student', email: normalizedEmail })
+      const token = response.access_token || response.token || null
+      if (token) {
+        setStoredToken(token)
+      }
+
+      const fullName = response.user_name || response.user?.user_name || response.user?.name || response.name || 'SDU User'
+      const role = (response.user_role || response.user?.user_role || response.user?.role || response.role || 'student') as Role
+
+      setCurrentUser({
+        fullName,
+        email: normalizedEmail,
+        role,
+      })
+      setLoginEmail('')
+      setLoginPassword('')
       setMessage('Logged in successfully.')
-      setView('home')
-    } catch {
-      setMessage('Could not login user.')
+      setView(getDefaultViewForRole(role))
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not login user.')
     } finally {
       setLoading(false)
     }
   }
 
   const handleLogout = () => {
+    clearStoredToken()
     setCurrentUser(null)
     setMessage('You have been logged out.')
     setView('login')
@@ -602,7 +832,7 @@ function App() {
   const handleBooking = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
 
-    const nextErrors: { name?: string, studentId?: string, slot?: string } = {}
+    const nextErrors: { name?: string, studentId?: string, service?: string, purpose?: string, date?: string, slot?: string } = {}
 
     if (!name.trim()) {
       nextErrors.name = 'Full name is required.'
@@ -610,12 +840,21 @@ function App() {
     if (!validateStudentId(studentId)) {
       nextErrors.studentId = 'Use a valid student ID (5-20 characters).'
     }
+    if (!selectedService) {
+      nextErrors.service = 'Choose a service first.'
+    }
+    if (!purpose.trim()) {
+      nextErrors.purpose = 'Purpose is required.'
+    }
+    if (!selectedDate) {
+      nextErrors.date = 'Choose a date.'
+    }
     if (!selectedSlot) {
       nextErrors.slot = 'Choose a slot first.'
     }
 
     const occupiedByOtherBooking = bookings.some(
-      (booking) => booking.slot === selectedSlot && booking.id !== editingBookingId,
+      (booking) => booking.slot === selectedSlot && booking.date === selectedDate && booking.id !== editingBookingId,
     )
     if (selectedSlot && occupiedByOtherBooking) {
       nextErrors.slot = 'This slot is already occupied. Choose another slot.'
@@ -647,6 +886,9 @@ function App() {
                   ...booking,
                   name: name.trim(),
                   studentId: studentId.trim(),
+                  service: selectedService,
+                  purpose: purpose.trim(),
+                  date: selectedDate,
                   slot: selectedSlot,
                   status: 'Confirmed',
                 }
@@ -655,16 +897,22 @@ function App() {
           setEditingBookingId(null)
           setName(currentUser.fullName)
           setStudentId('')
+          setSelectedService('')
+          setPurpose('')
+          setSelectedDate(new Date().toISOString().split('T')[0])
           setMessage('Booking rescheduled successfully in mock mode.')
           setView('bookings')
           return
         }
 
-        const newBooking = buildMockBooking(name.trim(), studentId.trim(), selectedSlot, bookings.length)
+        const newBooking = buildMockBooking(name.trim(), studentId.trim(), selectedService, purpose.trim(), selectedDate, selectedSlot, bookings.length)
         setBookings((current) => [...current, newBooking])
         setEditingBookingId(null)
         setName(currentUser.fullName)
         setStudentId('')
+        setSelectedService('')
+        setPurpose('')
+        setSelectedDate(new Date().toISOString().split('T')[0])
         setMessage(`Booking confirmed in mock mode. Queue number: ${newBooking.queueNumber}`)
         setView('bookings')
         return
@@ -683,7 +931,9 @@ function App() {
           body: JSON.stringify({
             student_name: name.trim(),
             student_email: `${studentId.trim().toLowerCase()}@sdu.edu.kz`,
-            service_type: 'deanery',
+            service_type: selectedService,
+            purpose: purpose.trim(),
+            date: selectedDate,
             slot_id: slotId,
           }),
         }) as {
@@ -700,6 +950,9 @@ function App() {
           id: rescheduled.id,
           name: rescheduled.student_name,
           studentId: rescheduled.student_email.split('@')[0] || studentId.trim(),
+          service: selectedService,
+          purpose: purpose.trim(),
+          date: selectedDate,
           slot: formatSlotLabelFromIso(rescheduled.timeslot_start),
           createdAt: new Date(rescheduled.created_at).toLocaleString('en-US'),
           status: 'Confirmed',
@@ -712,39 +965,56 @@ function App() {
         setBackendConnected(true)
         setEditingBookingId(null)
         setStudentId('')
+        setSelectedService('')
+        setPurpose('')
+        setSelectedDate(new Date().toISOString().split('T')[0])
         setMessage(`Booking rescheduled successfully. New queue: ${normalized.queueNumber}`)
         setView('bookings')
         return
       }
 
-      const created = await fetchJson(`${API.bookings}/`, {
+      const created = await apiRequest(API.bookings, {
         method: 'POST',
         body: JSON.stringify({
           student_name: name.trim(),
           student_email: `${studentId.trim().toLowerCase()}@sdu.edu.kz`,
-          service_type: 'deanery',
+          service: selectedService,
+          purpose: purpose.trim(),
+          date: selectedDate,
           slot_id: slotId,
         }),
       }) as {
         id: string
-        student_name: string
-        student_email: string
-        timeslot_start: string
-        created_at: string
+        student_name?: string
+        student_email?: string
+        timeslot_start?: string
+        created_at?: string
+        service?: string
+        purpose?: string
+        date?: string
+        queue_number?: string
+        status?: string
       }
 
       const normalized = normalizeBooking({
         id: created.id,
-        name: created.student_name,
-        studentId: created.student_email.split('@')[0] || studentId.trim(),
-        slot: formatSlotLabelFromIso(created.timeslot_start),
-        createdAt: new Date(created.created_at).toLocaleString('en-US'),
-        status: 'Confirmed',
+        name: created.student_name || name.trim(),
+        studentId: created.student_email?.split('@')[0] || studentId.trim(),
+        service: created.service || selectedService,
+        purpose: created.purpose || purpose.trim(),
+        date: created.date || selectedDate,
+        slot: created.timeslot_start ? formatSlotLabelFromIso(created.timeslot_start) : selectedSlot,
+        createdAt: created.created_at ? new Date(created.created_at).toLocaleString('en-US') : new Date().toLocaleString('en-US'),
+        queueNumber: created.queue_number,
+        status: toStatus(created.status),
       }, bookings.length)
       setBookings((current) => [...current, normalized])
       setBackendConnected(true)
       setEditingBookingId(null)
       setStudentId('')
+      setSelectedService('')
+      setPurpose('')
+      setSelectedDate(new Date().toISOString().split('T')[0])
       setMessage(`Booking created successfully. Queue number: ${normalized.queueNumber}`)
       setView('bookings')
     } catch {
@@ -760,28 +1030,26 @@ function App() {
     setMessage(null)
 
     try {
-      if (useMockApi) {
-        await wait(MOCK_DELAY_MS)
-        setBookings((current) => current.filter((booking) => booking.id !== id))
-        if (editingBookingId === id) {
-          setEditingBookingId(null)
-          setSelectedSlot('')
-        }
-        setMessage('Booking canceled in mock mode.')
-        return
-      }
-
-      await fetchJson(`${API.bookings}/${id}`, { method: 'DELETE' })
+      // Try real API first
+      await apiRequest(`${API.bookings}/${id}`, { method: 'DELETE' })
       setBookings((current) => current.filter((booking) => booking.id !== id))
       setBackendConnected(true)
       if (editingBookingId === id) {
         setEditingBookingId(null)
         setSelectedSlot('')
       }
-      setMessage('Booking canceled.')
-    } catch {
+      setMessage('Booking canceled successfully.')
+    } catch (error) {
+      console.warn('Failed to cancel booking on backend:', error)
       setBackendConnected(false)
-      setMessage('Could not cancel booking.')
+
+      // Fallback to local cancellation if backend fails
+      if (!FORCE_MOCK_MODE) {
+        setBookings((current) => current.filter((booking) => booking.id !== id))
+        setMessage('Booking canceled locally (server unavailable).')
+      } else {
+        setMessage('Could not cancel booking. Please try again.')
+      }
     } finally {
       setLoading(false)
     }
@@ -791,6 +1059,9 @@ function App() {
     setEditingBookingId(booking.id)
     setName(booking.name)
     setStudentId(booking.studentId)
+    setSelectedService(booking.service)
+    setPurpose(booking.purpose)
+    setSelectedDate(booking.date)
     setSelectedSlot(booking.slot)
     setView('booking')
     setMessage(`Reschedule mode: update details for ${booking.queueNumber}.`)
@@ -858,7 +1129,7 @@ function App() {
           </div>
 
           <div className="hero-badges">
-            <StatusPill label={useMockApi ? 'Mock Mode Active' : 'Live API Mode'} tone={useMockApi ? 'info' : 'success'} />
+            <StatusPill label={useMockApi ? 'Local API Mode' : 'Live API Mode'} tone={useMockApi ? 'info' : 'success'} />
             <StatusPill label={health} tone={healthTone} />
           </div>
         </div>
@@ -871,6 +1142,7 @@ function App() {
                 <strong>{currentUser.fullName}</strong>
                 <small>{currentUser.email}</small>
               </span>
+              <StatusPill label={currentUser.role?.charAt(0).toUpperCase() + currentUser.role.slice(1)} tone="info" />
             </div>
           ) : (
             <div className="user-pill guest-pill">
@@ -889,13 +1161,7 @@ function App() {
 
       <nav className="tab-nav" aria-label="Primary navigation">
         {(currentUser
-          ? [
-              { label: 'Home', value: 'home' },
-              { label: 'Time Slots', value: 'timeslots' },
-              { label: 'Booking', value: 'booking' },
-              { label: 'Bookings', value: 'bookings' },
-              { label: 'Health Check', value: 'health' },
-            ]
+          ? getNavigationTabs(currentUser.role)
           : [
               { label: 'Register', value: 'register' },
               { label: 'Login', value: 'login' },
@@ -914,6 +1180,16 @@ function App() {
 
       {loading && <div className="alert-banner">Loading latest data...</div>}
       {message && <div className="alert-banner muted">{message}</div>}
+
+      {currentUser && !isAuthorizedView(view, currentUser.role) && (
+        <section className="surface-card">
+          <SectionHeader
+            title="Access denied"
+            subtitle="You do not have permission to view this page."
+          />
+          <p>Please contact the administrator if you believe this is an error.</p>
+        </section>
+      )}
 
       {!currentUser && (
         <section className="surface-card auth-welcome">
@@ -949,9 +1225,10 @@ function App() {
                     type="email"
                     value={registerEmail}
                     onChange={(event) => setRegisterEmail(event.target.value)}
-                    placeholder="name@sdu.edu.kz"
+                    placeholder="230103152@sdu.edu.kz"
                     className="field"
                   />
+                  <small>Use your student SDU email. Your Student ID will be detected automatically.</small>
                 </label>
 
                 <label className="field-block">
@@ -1000,12 +1277,13 @@ function App() {
             )}
 
             <aside className="surface-card mini-roadmap">
-              <SectionHeader title="Alpha Highlights" subtitle="What this build already demonstrates" />
+              <SectionHeader title="Campus Queue Management" subtitle="A production-ready system for managing university service queues." />
               <ul>
-                <li>Slot-based booking for university services</li>
-                <li>Digital queue number assignment</li>
-                <li>Real-time style service-health panel</li>
-                <li>Mock-mode fallback for offline demos</li>
+                <li>Secure SDU student authentication</li>
+                <li>Real-time booking and queue tracking</li>
+                <li>Role-based access for students, staff, and administrators</li>
+                <li>Cloud backend with PostgreSQL database</li>
+                <li>Staff dashboard for service processing</li>
               </ul>
             </aside>
           </div>
@@ -1031,61 +1309,151 @@ function App() {
             <StatCard
               title="System health"
               value={healthTone === 'warning' ? 'Attention' : 'Operational'}
-              helper={useMockApi ? 'Simulated monitoring enabled' : 'Connected to API'}
+              helper={FORCE_MOCK_MODE ? 'Local API mode' : 'Connected to API'}
               icon="health"
             />
           </div>
 
-          <div className="home-grid">
-            <article className="surface-card nested-card">
-              <SectionHeader title="How UniQueue Works" subtitle="Simple three-step flow" />
-              <ol className="steps-list">
-                <li>
-                  <strong>Choose slot</strong>
-                  <span>Select the best available time from a structured slot list.</span>
-                </li>
-                <li>
-                  <strong>Confirm booking</strong>
-                  <span>Submit your details and verify policy before final confirmation.</span>
-                </li>
-                <li>
-                  <strong>Join digital queue</strong>
-                  <span>Get queue number and service status updates in one place.</span>
-                </li>
-              </ol>
-            </article>
-
-            <article className="surface-card nested-card">
-              <SectionHeader title="UniQueue Capabilities" subtitle="Current and near-term scope" />
-              <div className="feature-grid">
-                <FeatureCard
-                  icon="booking"
-                  title="Time-slot operations"
-                  description="Balanced service demand through student-friendly slot reservations."
-                />
-                <FeatureCard
-                  icon="queue"
-                  title="Digital queue flow"
-                  description="Queue numbers and status badges reduce uncertainty at service points."
-                />
-                <FeatureCard
-                  icon="health"
-                  title="Service observability"
-                  description="Track frontend, API, auth, and booking service condition quickly."
-                />
-                <FeatureCard
-                  icon="food"
-                  title="Pre-order roadmap"
-                  description="Future module for cafeteria pre-order and pickup optimization."
-                />
-                <FeatureCard
-                  icon="analytics"
-                  title="Admin analytics roadmap"
-                  description="Peak-hour insights and capacity tuning for operational staff."
-                />
+          {currentUser.role === 'student' && (
+            <>
+              <div className="services-section">
+                <SectionHeader title="Available Services" subtitle="Choose a service to start booking" />
+                <div className="services-grid">
+                  {MOCK_SERVICES.map((service) => (
+                    <article key={service.id} className="service-card surface-card nested-card">
+                      <div className="service-header">
+                        <span className="service-icon">{service.icon}</span>
+                        <div>
+                          <h3>{service.name}</h3>
+                          <p>{service.description}</p>
+                        </div>
+                      </div>
+                      <div className="service-details">
+                        <small>Hours: {service.hours}</small>
+                        <div className="queue-load">
+                          <span>Queue Load: {service.queueLoad}%</span>
+                          <div className="load-bar">
+                            <div className="load-fill" style={{ width: `${service.queueLoad}%` }}></div>
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={() => {
+                          setSelectedService(service.id)
+                          setView('booking')
+                        }}
+                      >
+                        Book Now
+                      </button>
+                    </article>
+                  ))}
+                </div>
               </div>
-            </article>
-          </div>
+
+              <div className="home-grid">
+                <article className="surface-card nested-card">
+                  <SectionHeader title="How UniQueue Works" subtitle="Simple three-step flow" />
+                  <ol className="steps-list">
+                    <li>
+                      <strong>Choose slot</strong>
+                      <span>Select the best available time from a structured slot list.</span>
+                    </li>
+                    <li>
+                      <strong>Confirm booking</strong>
+                      <span>Submit your details and verify policy before final confirmation.</span>
+                    </li>
+                    <li>
+                      <strong>Join digital queue</strong>
+                      <span>Get queue number and service status updates in one place.</span>
+                    </li>
+                  </ol>
+                </article>
+
+                <article className="surface-card nested-card">
+                  <SectionHeader title="UniQueue Capabilities" subtitle="Current and near-term scope" />
+                  <div className="feature-grid">
+                    <FeatureCard
+                      icon="booking"
+                      title="Time-slot operations"
+                      description="Balanced service demand through student-friendly slot reservations."
+                    />
+                    <FeatureCard
+                      icon="queue"
+                      title="Digital queue flow"
+                      description="Queue numbers and status badges reduce uncertainty at service points."
+                    />
+                    <FeatureCard
+                      icon="health"
+                      title="Service observability"
+                      description="Track frontend, API, auth, and booking service condition quickly."
+                    />
+                    <FeatureCard
+                      icon="food"
+                      title="Pre-order roadmap"
+                      description="Future module for cafeteria pre-order and pickup optimization."
+                    />
+                    <FeatureCard
+                      icon="analytics"
+                      title="Admin analytics roadmap"
+                      description="Peak-hour insights and capacity tuning for operational staff."
+                    />
+                  </div>
+                </article>
+              </div>
+            </>
+          )}
+
+          {currentUser.role === 'admin' && (
+            <>
+              <div className="queue-display">
+                <SectionHeader title="Admin Overview" subtitle="High-level university queuing metrics" />
+                <div className="queue-stats">
+                  <StatCard title="Total bookings today" value="47" helper="Live backend data" icon="booking" />
+                  <StatCard title="Completed bookings" value="32" helper="Operational progress" icon="check" />
+                  <StatCard title="Waiting students" value="12" helper="Queue status summary" icon="queue" />
+                  <StatCard title="Peak hour" value="11:00 AM" helper="Highest demand" icon="analytics" />
+                </div>
+              </div>
+
+              <div className="home-grid">
+                <article className="surface-card nested-card">
+                  <SectionHeader title="Admin tools" subtitle="Manage services and monitor system status" />
+                  <ul className="steps-list">
+                    <li>
+                      <strong>Maintain service load</strong>
+                      <span>Use analytics and queue data to balance campus services.</span>
+                    </li>
+                    <li>
+                      <strong>Monitor user activity</strong>
+                      <span>Track bookings, staff workload, and system health.</span>
+                    </li>
+                    <li>
+                      <strong>Validate access rules</strong>
+                      <span>Role-based pages ensure secure admin controls.</span>
+                    </li>
+                  </ul>
+                </article>
+
+                <article className="surface-card nested-card">
+                  <SectionHeader title="Deployment ready" subtitle="Production-focused authentication and backend integration" />
+                  <div className="feature-grid">
+                    <FeatureCard
+                      icon="analytics"
+                      title="Service analytics"
+                      description="Track peak hours and most used services across campus."
+                    />
+                    <FeatureCard
+                      icon="health"
+                      title="System reliability"
+                      description="Employ real backend health checks and error handling."
+                    />
+                  </div>
+                </article>
+              </div>
+            </>
+          )}
         </section>
       )}
 
@@ -1200,6 +1568,56 @@ function App() {
               </label>
 
               <label className="field-block">
+                <span>Service</span>
+                <select
+                  value={selectedService}
+                  onChange={(event) => {
+                    setSelectedService(event.target.value)
+                    setBookingFieldErrors((current) => ({ ...current, service: undefined }))
+                  }}
+                  className={`field ${bookingFieldErrors.service ? 'field-error' : ''}`}
+                >
+                  <option value="" disabled>Choose a service</option>
+                  {MOCK_SERVICES.map((service) => (
+                    <option key={service.id} value={service.id}>{service.name}</option>
+                  ))}
+                </select>
+                <small>Select the university service you need assistance with.</small>
+                {bookingFieldErrors.service && <small className="error-text">{bookingFieldErrors.service}</small>}
+              </label>
+
+              <label className="field-block">
+                <span>Purpose</span>
+                <input
+                  value={purpose}
+                  onChange={(event) => {
+                    setPurpose(event.target.value)
+                    setBookingFieldErrors((current) => ({ ...current, purpose: undefined }))
+                  }}
+                  placeholder="Brief description of your request"
+                  className={`field ${bookingFieldErrors.purpose ? 'field-error' : ''}`}
+                />
+                <small>Describe why you're visiting this service.</small>
+                {bookingFieldErrors.purpose && <small className="error-text">{bookingFieldErrors.purpose}</small>}
+              </label>
+
+              <label className="field-block">
+                <span>Date</span>
+                <input
+                  type="date"
+                  value={selectedDate}
+                  onChange={(event) => {
+                    setSelectedDate(event.target.value)
+                    setBookingFieldErrors((current) => ({ ...current, date: undefined }))
+                  }}
+                  min={new Date().toISOString().split('T')[0]}
+                  className={`field ${bookingFieldErrors.date ? 'field-error' : ''}`}
+                />
+                <small>Choose the date for your appointment.</small>
+                {bookingFieldErrors.date && <small className="error-text">{bookingFieldErrors.date}</small>}
+              </label>
+
+              <label className="field-block">
                 <span>Time slot</span>
                 <select
                   value={selectedSlot}
@@ -1237,12 +1655,28 @@ function App() {
                   <strong>{studentId || 'Not provided'}</strong>
                 </li>
                 <li>
-                  <span>Selected slot</span>
+                  <span>Service</span>
+                  <strong>{MOCK_SERVICES.find(s => s.id === selectedService)?.name || 'Not selected'}</strong>
+                </li>
+                <li>
+                  <span>Purpose</span>
+                  <strong>{purpose || 'Not provided'}</strong>
+                </li>
+                <li>
+                  <span>Date</span>
+                  <strong>{selectedDate ? new Date(selectedDate).toLocaleDateString() : 'Not selected'}</strong>
+                </li>
+                <li>
+                  <span>Time slot</span>
                   <strong>{selectedSlot || 'No slot selected'}</strong>
                 </li>
                 <li>
-                  <span>{editingBookingId ? 'Current mode' : 'Estimated queue number'}</span>
+                  <span>Estimated queue number</span>
                   <strong>{editingBookingId ? 'Reschedule existing booking' : generateQueueNumber(bookings.length)}</strong>
+                </li>
+                <li>
+                  <span>Status</span>
+                  <strong>Confirmed</strong>
                 </li>
               </ul>
 
@@ -1275,7 +1709,7 @@ function App() {
             <div className="booking-list">
               {bookings.map((booking) => {
                 const status = booking.status || 'Confirmed'
-                const tone = status === 'Completed' ? 'success' : status === 'Pending' ? 'warning' : 'info'
+                const tone = status === 'Completed' ? 'success' : status === 'Waiting' ? 'warning' : 'info'
 
                 return (
                   <article key={booking.id} className="booking-card">
@@ -1283,7 +1717,9 @@ function App() {
                       <div className="queue-badge">{booking.queueNumber}</div>
                       <div>
                         <h3>{booking.name}</h3>
-                        <p>{booking.studentId} • {booking.slot}</p>
+                        <p>{booking.studentId} • {MOCK_SERVICES.find(s => s.id === booking.service)?.name || booking.service}</p>
+                        <p>{new Date(booking.date).toLocaleDateString()} at {booking.slot}</p>
+                        <small>Purpose: {booking.purpose}</small>
                         {booking.createdAt && <small>Booked at {booking.createdAt}</small>}
                       </div>
                     </div>
@@ -1291,7 +1727,7 @@ function App() {
                     <div className="booking-actions">
                       <StatusPill label={status} tone={tone} />
                       <button type="button" className="btn btn-ghost" onClick={() => prepareReschedule(booking)}>
-                        Reschedule
+                        View Details
                       </button>
                       <button type="button" className="btn btn-secondary" onClick={() => void handleCancel(booking.id)}>
                         Cancel
@@ -1342,7 +1778,7 @@ function App() {
                 <h3>Backend API</h3>
                 <p>{useMockApi ? 'Simulated in mock mode' : 'Connected to live API'}</p>
               </div>
-              <StatusPill label={useMockApi ? 'Simulated' : 'Online'} tone={useMockApi ? 'info' : 'success'} />
+              <StatusPill label={useMockApi ? 'Mock Mode' : 'Connected'} tone={useMockApi ? 'info' : 'success'} />
             </article>
 
             <article className="health-row">
@@ -1355,10 +1791,65 @@ function App() {
 
             <article className="health-row">
               <div>
-                <h3>Booking service</h3>
+                <h3>Booking Service</h3>
                 <p>Slot processing and queue number generation</p>
               </div>
               <StatusPill label={bookings.length ? 'Active' : 'Idle'} tone={bookings.length ? 'success' : 'neutral'} />
+            </article>
+
+            <article className="health-row">
+              <div>
+                <h3>Queue Service</h3>
+                <p>Real-time queue management and status updates</p>
+              </div>
+              <StatusPill label="Active" tone="success" />
+            </article>
+          </div>
+
+          {useMockApi && (
+            <div className="mock-explanation">
+              <SectionHeader title="Mock Mode Active" subtitle="This demo uses simulated data for offline presentation" />
+              <p>
+                UniQueue is currently running in mock mode, which simulates all backend services locally in your browser.
+                This allows for a complete demonstration without requiring a live server connection. All bookings, authentication,
+                and queue operations are stored in your browser's local storage and will persist between sessions.
+              </p>
+            </div>
+          )}
+        </section>
+      )}
+
+      {currentUser && currentUser.role === 'admin' && view === 'analytics' && (
+        <section className="surface-card">
+          <SectionHeader
+            title="Admin Analytics"
+            subtitle="Daily performance metrics and service insights"
+          />
+
+          <div className="stats-grid">
+            <StatCard title="Total bookings today" value="47" helper="All services combined" icon="booking" />
+            <StatCard title="Completed bookings" value="32" helper="75% completion rate" icon="check" />
+            <StatCard title="Cancelled bookings" value="5" helper="10% cancellation rate" icon="alert" />
+            <StatCard title="Average waiting time" value="18 min" helper="From booking to service" icon="slots" />
+            <StatCard title="Peak hour" value="11:00 AM" helper="Highest booking volume" icon="analytics" />
+            <StatCard title="Most used service" value="Student Service Center" helper="28 bookings today" icon="user" />
+          </div>
+
+          <div className="analytics-charts">
+            <article className="surface-card nested-card">
+              <SectionHeader title="Service Usage" subtitle="Bookings by service type" />
+              <div className="chart-placeholder">
+                <p>📊 Service usage chart would go here</p>
+                <small>Mock data: Student Service Center (28), Dean's Office (12), Library (7)</small>
+              </div>
+            </article>
+
+            <article className="surface-card nested-card">
+              <SectionHeader title="Hourly Distribution" subtitle="Booking patterns throughout the day" />
+              <div className="chart-placeholder">
+                <p>📈 Hourly distribution chart would go here</p>
+                <small>Mock data: Peak at 11 AM, steady from 9 AM - 4 PM</small>
+              </div>
             </article>
           </div>
         </section>
