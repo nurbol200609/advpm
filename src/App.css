@@ -117,7 +117,9 @@
 }
 
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
 }
 
@@ -239,7 +241,8 @@ button:disabled {
 
 .auth-layout,
 .content-grid,
-.profile-layout {
+.profile-layout,
+.admin-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 380px;
   gap: 16px;
@@ -247,6 +250,11 @@ button:disabled {
 
 .profile-layout {
   grid-template-columns: 360px minmax(0, 1fr);
+  align-items: start;
+}
+
+.admin-grid {
+  grid-template-columns: 420px minmax(0, 1fr);
   align-items: start;
 }
 
@@ -638,6 +646,7 @@ button:disabled {
 }
 
 .profile-fields input,
+.profile-fields select,
 .profile-fields textarea {
   width: 100%;
   border: 1px solid var(--line-strong);
@@ -650,6 +659,7 @@ button:disabled {
 }
 
 .profile-fields input:focus,
+.profile-fields select:focus,
 .profile-fields textarea:focus {
   border-color: var(--blue);
   box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
@@ -659,11 +669,70 @@ button:disabled {
   grid-column: 1 / -1;
 }
 
+.full-button {
+  width: 100%;
+  margin-top: 16px;
+}
+
+.admin-row {
+  grid-template-columns: 84px 1fr auto auto;
+}
+
+.rules-panel {
+  align-self: stretch;
+}
+
+.rules-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.rules-list div,
+.analytics-grid div {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel-soft);
+}
+
+.rules-list strong,
+.rules-list span,
+.analytics-grid strong,
+.analytics-grid span {
+  display: block;
+}
+
+.rules-list span,
+.analytics-grid span {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.analytics-grid strong {
+  font-size: 2rem;
+}
+
+.analytics-note {
+  margin-top: 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 @media (max-width: 900px) {
   .topbar,
   .auth-layout,
   .content-grid,
-  .profile-layout {
+  .profile-layout,
+  .admin-grid,
+  .analytics-grid,
+  .analytics-note {
     grid-template-columns: 1fr;
   }
 
@@ -698,7 +767,8 @@ button:disabled {
   .panel-heading,
   .booking-row,
   .queue-card,
-  .profile-fields {
+  .profile-fields,
+  .admin-row {
     grid-template-columns: 1fr;
   }
 

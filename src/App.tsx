@@ -57,7 +57,21 @@ type QueueItem = {
   timeslot_id: string
 }
 
-type View = 'slots' | 'my' | 'queue' | 'all' | 'profile'
+type SlotForm = {
+  service_type: ServiceType
+  start_time: string
+  end_time: string
+  capacity: string
+}
+
+type AdminUserForm = {
+  name: string
+  email: string
+  password: string
+  role: Extract<Role, 'staff' | 'admin'>
+}
+
+type View = 'slots' | 'my' | 'queue' | 'all' | 'profile' | 'manage-slots' | 'users' | 'analytics'
 type AuthMode = 'login' | 'register'
 
 const services: Array<{ id: ServiceType; title: string; short: string }> = [
@@ -88,6 +102,20 @@ const emptyProfile: ProfileInfo = {
   photo: '',
 }
 
+const emptySlotForm: SlotForm = {
+  service_type: 'cafe',
+  start_time: '',
+  end_time: '',
+  capacity: '10',
+}
+
+const emptyAdminUserForm: AdminUserForm = {
+  name: '',
+  email: '',
+  password: '',
+  role: 'staff',
+}
+
 function formatDateTime(value: string) {
   return new Intl.DateTimeFormat('en-GB', {
     day: '2-digit',
@@ -100,6 +128,12 @@ function formatDateTime(value: string) {
 function formatTimeRange(slot: TimeSlot) {
   const fmt = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit' })
   return `${fmt.format(new Date(slot.start_time))} - ${fmt.format(new Date(slot.end_time))}`
+}
+
+function toDateTimeLocal(value: string) {
+  const date = new Date(value)
+  const offset = date.getTimezoneOffset() * 60000
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16)
 }
 
 function normalizeError(error: unknown) {
@@ -161,6 +195,9 @@ function App() {
   const [allBookings, setAllBookings] = useState<StaffBooking[]>([])
   const [queue, setQueue] = useState<QueueItem[]>([])
   const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null)
+  const [editingSlotId, setEditingSlotId] = useState<string | null>(null)
+  const [slotForm, setSlotForm] = useState<SlotForm>(emptySlotForm)
+  const [adminUserForm, setAdminUserForm] = useState<AdminUserForm>(emptyAdminUserForm)
   const [loading, setLoading] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
 
@@ -172,6 +209,15 @@ function App() {
   const slotById = useMemo(() => {
     return new Map(slots.map((slot) => [slot.id, slot]))
   }, [slots])
+
+  const bookingStats = useMemo(() => {
+    const total = allBookings.length
+    const active = allBookings.filter((booking) => booking.status === 'active').length
+    const completed = allBookings.filter((booking) => booking.status === 'completed').length
+    const cancelled = allBookings.filter((booking) => booking.status === 'cancelled').length
+
+    return { total, active, completed, cancelled }
+  }, [allBookings])
 
   const saveSession = (nextToken: string, nextUser: AuthUser) => {
     localStorage.setItem(tokenKey, nextToken)
@@ -267,6 +313,8 @@ function App() {
     if (view === 'my') void loadMyBookings()
     if (view === 'queue' && isStaff) void loadQueue(service)
     if (view === 'all' && isStaff) void loadAllBookings()
+    if (view === 'manage-slots' && user.role === 'admin') void loadSlots(service)
+    if (view === 'analytics' && user.role === 'admin') void loadAllBookings()
   }, [view])
 
   const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
@@ -385,6 +433,105 @@ function App() {
     }
 
     setNotice('Profile updated.')
+  }
+
+  const updateSlotForm = (field: keyof SlotForm, value: string) => {
+    setSlotForm((current) => ({ ...current, [field]: value }))
+  }
+
+  const editSlot = (slot: TimeSlot) => {
+    setEditingSlotId(slot.id)
+    setSlotForm({
+      service_type: slot.service_type,
+      start_time: toDateTimeLocal(slot.start_time),
+      end_time: toDateTimeLocal(slot.end_time),
+      capacity: String(slot.capacity),
+    })
+    setView('manage-slots')
+  }
+
+  const resetSlotForm = () => {
+    setEditingSlotId(null)
+    setSlotForm({ ...emptySlotForm, service_type: service })
+  }
+
+  const saveSlot = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!token || user?.role !== 'admin') return
+
+    const payload = {
+      service_type: slotForm.service_type,
+      start_time: slotForm.start_time,
+      end_time: slotForm.end_time,
+      capacity: Number(slotForm.capacity),
+      is_active: true,
+    }
+
+    setLoading(true)
+    setNotice(null)
+    try {
+      await request<TimeSlot>(
+        editingSlotId ? `/api/timeslots/${editingSlotId}` : '/api/timeslots/',
+        {
+          method: editingSlotId ? 'PUT' : 'POST',
+          body: JSON.stringify(payload),
+        },
+        token,
+      )
+      setService(slotForm.service_type)
+      setNotice(editingSlotId ? 'Slot updated.' : 'Slot created.')
+      resetSlotForm()
+      await loadSlots(slotForm.service_type)
+    } catch (error) {
+      setNotice(normalizeError(error))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const deleteSlot = async (slotId: string) => {
+    if (!token || user?.role !== 'admin') return
+
+    setLoading(true)
+    setNotice(null)
+    try {
+      await request<{ msg: string }>(`/api/timeslots/${slotId}`, { method: 'DELETE' }, token)
+      setNotice('Slot deleted.')
+      if (editingSlotId === slotId) resetSlotForm()
+      await loadSlots(service)
+    } catch (error) {
+      setNotice(normalizeError(error))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const updateAdminUserForm = (field: keyof AdminUserForm, value: string) => {
+    setAdminUserForm((current) => ({ ...current, [field]: value } as AdminUserForm))
+  }
+
+  const createStaffUser = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!token || user?.role !== 'admin') return
+
+    setLoading(true)
+    setNotice(null)
+    try {
+      await request(
+        '/api/auth/register',
+        {
+          method: 'POST',
+          body: JSON.stringify(adminUserForm),
+        },
+        token,
+      )
+      setAdminUserForm(emptyAdminUserForm)
+      setNotice(`${adminUserForm.role} account created.`)
+    } catch (error) {
+      setNotice(normalizeError(error))
+    } finally {
+      setLoading(false)
+    }
   }
 
   const handleBook = async () => {
@@ -560,11 +707,14 @@ function App() {
       ) : (
         <>
           <nav className="view-tabs">
-            <button className={view === 'slots' ? 'active' : ''} type="button" onClick={() => setView('slots')}>Slots</button>
             <button className={view === 'profile' ? 'active' : ''} type="button" onClick={() => setView('profile')}>Profile</button>
+            {(user.role === 'student' || user.role === 'admin') && <button className={view === 'slots' ? 'active' : ''} type="button" onClick={() => setView('slots')}>Slots</button>}
             {user.role === 'student' && <button className={view === 'my' ? 'active' : ''} type="button" onClick={() => setView('my')}>My bookings</button>}
             {isStaff && <button className={view === 'queue' ? 'active' : ''} type="button" onClick={() => setView('queue')}>Queue</button>}
             {isStaff && <button className={view === 'all' ? 'active' : ''} type="button" onClick={() => setView('all')}>All bookings</button>}
+            {user.role === 'admin' && <button className={view === 'manage-slots' ? 'active' : ''} type="button" onClick={() => setView('manage-slots')}>Manage slots</button>}
+            {user.role === 'admin' && <button className={view === 'users' ? 'active' : ''} type="button" onClick={() => setView('users')}>Staff users</button>}
+            {user.role === 'admin' && <button className={view === 'analytics' ? 'active' : ''} type="button" onClick={() => setView('analytics')}>Analytics</button>}
           </nav>
 
           {view === 'profile' && (
@@ -742,6 +892,138 @@ function App() {
             </section>
           )}
 
+          {view === 'manage-slots' && user.role === 'admin' && (
+            <section className="admin-grid">
+              <form className="panel admin-form" onSubmit={saveSlot}>
+                <div className="panel-heading">
+                  <div>
+                    <p className="eyebrow">Admin</p>
+                    <h2>{editingSlotId ? 'Edit slot' : 'Create slot'}</h2>
+                  </div>
+                  {editingSlotId && <button className="secondary-button" type="button" onClick={resetSlotForm}>New slot</button>}
+                </div>
+
+                <div className="profile-fields">
+                  <label>
+                    <span>Service</span>
+                    <select value={slotForm.service_type} onChange={(event) => updateSlotForm('service_type', event.target.value)}>
+                      {services.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Capacity</span>
+                    <input type="number" min="1" value={slotForm.capacity} onChange={(event) => updateSlotForm('capacity', event.target.value)} required />
+                  </label>
+                  <label>
+                    <span>Start time</span>
+                    <input type="datetime-local" value={slotForm.start_time} onChange={(event) => updateSlotForm('start_time', event.target.value)} required />
+                  </label>
+                  <label>
+                    <span>End time</span>
+                    <input type="datetime-local" value={slotForm.end_time} onChange={(event) => updateSlotForm('end_time', event.target.value)} required />
+                  </label>
+                </div>
+
+                <button className="primary-button full-button" type="submit">{editingSlotId ? 'Save changes' : 'Create slot'}</button>
+              </form>
+
+              <section className="panel">
+                <div className="panel-heading">
+                  <div>
+                    <p className="eyebrow">{serviceLabel(service)}</p>
+                    <h2>Slot list</h2>
+                  </div>
+                  <button className="secondary-button" type="button" onClick={() => void loadSlots()}>Refresh</button>
+                </div>
+                <div className="table-like">
+                  {slots.map((slot) => (
+                    <article className="booking-row admin-row" key={slot.id}>
+                      <span className="queue-number">{slot.booked_count}/{slot.capacity}</span>
+                      <div>
+                        <strong>{formatDateTime(slot.start_time)}</strong>
+                        <small>{serviceLabel(slot.service_type)} / {formatTimeRange(slot)}</small>
+                      </div>
+                      <button className="secondary-button" type="button" onClick={() => editSlot(slot)}>Edit</button>
+                      <button className="secondary-button danger" type="button" onClick={() => void deleteSlot(slot.id)}>Delete</button>
+                    </article>
+                  ))}
+                  {!slots.length && <div className="empty">No slots for {serviceLabel(service)} yet.</div>}
+                </div>
+              </section>
+            </section>
+          )}
+
+          {view === 'users' && user.role === 'admin' && (
+            <section className="admin-grid">
+              <form className="panel admin-form" onSubmit={createStaffUser}>
+                <div className="panel-heading">
+                  <div>
+                    <p className="eyebrow">Admin</p>
+                    <h2>Create staff/admin</h2>
+                  </div>
+                </div>
+                <div className="profile-fields">
+                  <label>
+                    <span>Name</span>
+                    <input value={adminUserForm.name} onChange={(event) => updateAdminUserForm('name', event.target.value)} placeholder="Aizhan" required />
+                  </label>
+                  <label>
+                    <span>Role</span>
+                    <select value={adminUserForm.role} onChange={(event) => updateAdminUserForm('role', event.target.value)}>
+                      <option value="staff">Staff</option>
+                      <option value="admin">Admin</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Email</span>
+                    <input type="email" value={adminUserForm.email} onChange={(event) => updateAdminUserForm('email', event.target.value)} placeholder="staff@sdu.edu.kz" required />
+                  </label>
+                  <label>
+                    <span>Password</span>
+                    <input type="password" minLength={6} value={adminUserForm.password} onChange={(event) => updateAdminUserForm('password', event.target.value)} placeholder="Minimum 6 characters" required />
+                  </label>
+                </div>
+                <button className="primary-button full-button" type="submit">Create account</button>
+              </form>
+
+              <aside className="panel rules-panel">
+                <p className="eyebrow">Role model</p>
+                <h2>Access rules</h2>
+                <div className="rules-list">
+                  <div><strong>Staff</strong><span>Queue, served button, all bookings.</span></div>
+                  <div><strong>Admin</strong><span>Staff tools plus slot management and user creation.</span></div>
+                  <div><strong>Student</strong><span>Registration, booking, own booking history.</span></div>
+                </div>
+              </aside>
+            </section>
+          )}
+
+          {view === 'analytics' && user.role === 'admin' && (
+            <section className="panel">
+              <div className="panel-heading">
+                <div>
+                  <p className="eyebrow">Admin</p>
+                  <h2>Booking analytics</h2>
+                </div>
+                <button className="secondary-button" type="button" onClick={() => void loadAllBookings()}>Refresh</button>
+              </div>
+              <div className="analytics-grid">
+                <div><strong>{bookingStats.total}</strong><span>Total bookings</span></div>
+                <div><strong>{bookingStats.active}</strong><span>Active</span></div>
+                <div><strong>{bookingStats.completed}</strong><span>Completed</span></div>
+                <div><strong>{bookingStats.cancelled}</strong><span>Cancelled</span></div>
+              </div>
+              <div className="rules-list analytics-note">
+                {services.map((item) => (
+                  <div key={item.id}>
+                    <strong>{item.title}</strong>
+                    <span>{service === item.id ? slots.length : 'Switch service to load slots'} visible slots in current service view.</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
           {view === 'all' && isStaff && (
             <section className="panel">
               <div className="panel-heading">
@@ -762,6 +1044,9 @@ function App() {
                     <span className={`status ${booking.status}`}>{statusLabel[booking.status]}</span>
                     {booking.status === 'active' && (
                       <button className="primary-button compact" type="button" onClick={() => void handleServe(booking.id)}>Served</button>
+                    )}
+                    {user.role === 'admin' && booking.status === 'active' && (
+                      <button className="secondary-button danger" type="button" onClick={() => void handleCancel(booking.id)}>Cancel</button>
                     )}
                   </article>
                 ))}
