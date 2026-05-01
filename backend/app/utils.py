@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from dotenv import load_dotenv
+import hashlib
 import os
 
 load_dotenv()
@@ -10,10 +11,10 @@ JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 60))
 
 def hash_password(password: str) -> str:
-    return password
+    return hashlib.sha256(password.encode()).hexdigest()
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return plain == hashed
+    return hash_password(plain) == hashed
 
 def create_token(data: dict) -> str:
     to_encode = data.copy()
