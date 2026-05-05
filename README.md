@@ -101,7 +101,7 @@ Bookings:
 
 Test accounts:
 Staff: staff@sdu.edu.kz / 123456
-beksultan@sdu.edu.kz / 123456
+nurbol@sdu.edu.kz / 123456
 Admin: admin@sdu.edu.kz / 123456
 
 ## Frontend Setup
