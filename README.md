@@ -98,6 +98,12 @@ Bookings:
 | `GET` | `/api/bookings/queue/{service_type}` | Get live queue, staff/admin |
 | `POST` | `/api/bookings/serve/{booking_id}` | Mark booking as served, staff/admin |
 
+
+Test accounts:
+Staff: staff@sdu.edu.kz / 123456
+beksultan@sdu.edu.kz / 123456
+Admin: admin@sdu.edu.kz / 123456
+
 ## Frontend Setup
 
 Install dependencies:
