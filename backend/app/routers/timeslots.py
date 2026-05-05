@@ -36,14 +36,26 @@ def slot_response(db: Session, slot: TimeSlot):
     )
 
 def make_slots(db, service):
-    check = db.query(TimeSlot).filter(TimeSlot.service_type == service).first()
-    if check:
-        return
     now = datetime.utcnow()
+    today_start = datetime.combine(now.date(), datetime.min.time())
+    window_end = today_start + timedelta(days=3)
+
+    existing_starts = {
+        start_time
+        for (start_time,) in db.query(TimeSlot.start_time).filter(
+            TimeSlot.service_type == service,
+            TimeSlot.start_time >= today_start,
+            TimeSlot.start_time < window_end,
+        ).all()
+    }
+
+    created = False
     for d in range(3):
         day = now.date() + timedelta(days=d)
         for h in range(9, 18):
             start = datetime.combine(day, datetime.min.time()) + timedelta(hours=h)
+            if start <= now or start in existing_starts:
+                continue
             slot = TimeSlot(
                 service_type=service,
                 start_time=start,
@@ -51,7 +63,9 @@ def make_slots(db, service):
                 capacity=10
             )
             db.add(slot)
-    db.commit()
+            created = True
+    if created:
+        db.commit()
 
 @router.post("/", response_model=TimeslotResponse)
 def create_slot(data: TimeslotRequest, db: Session = Depends(get_db), user=Depends(get_current_user)):
